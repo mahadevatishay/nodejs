@@ -1,110 +1,99 @@
 pipeline {
-  agent any
 
-  environment {
-    SERVER_IP      = '172.31.47.194'              // target EC2 (private or public)
-    SSH_CREDENTIAL = 'node-app-key'               // Jenkins credentials ID
-    REPO_URL       = 'https://github.com/mahadevatishay/nodejs.git'
-    BRANCH         = 'main'
-    REMOTE_USER    = 'ubuntu'
-    REMOTE_PATH    = '/home/ubuntu/node-app'
-    NODE_MAJOR     = '18'                          // choose 16/18/20 as you prefer
-  }
+    agent any
+ 
+    environment {
 
-  options {
-    // fail fast if any command returns non-zero
-    timestamps()
-  }
+        SERVER_IP      = '52.69.45.165'
 
-  stages {
+        SSH_CREDENTIAL = 'node-app-key'
 
-    stage('Clone Repository') {
-      steps {
-        checkout([$class: 'GitSCM',
-          branches: [[name: "*/${BRANCH}"]],
-          userRemoteConfigs: [[url: "${REPO_URL}"]]
-        ])
-      }
+        REPO_URL       = 'https://github.com/ridhi-rj/jenkinsrepo.git'
+
+        BRANCH         = 'main'
+
+        REMOTE_USER    = 'ubuntu'
+
+        REMOTE_PATH    = '/home/ubuntu/node-app'
+
     }
 
-    stage('Upload Files to target-server') {
-      steps {
-        sshagent([SSH_CREDENTIAL]) {
-          sh '''
-            set -e
-            # Create remote path
-            ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${SERVER_IP} "mkdir -p ${REMOTE_PATH}"
 
-            # Sync workspace to remote (excluding .git and Jenkins-specific dirs)
-            rsync -avz --delete \
-              --exclude=".git" \
-              --exclude=".jenkins" \
-              -e "ssh -o StrictHostKeyChecking=no" \
-              ./ ${REMOTE_USER}@${SERVER_IP}:${REMOTE_PATH}/
-          '''
+    stages {
+
+        stage('Clone Repository') {
+
+            steps {
+
+                git branch: "${BRANCH}", url: "${REPO_URL}"
+
+            }
+
         }
-      }
-    }
+ 
+        stage('Upload Files to target-server') {
 
-    stage('Install Node, npm, PM2 & Start App on target') {
-      steps {
-        sshagent([SSH_CREDENTIAL]) {
-          sh '''
-            set -e
-            ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${SERVER_IP} bash -lc "
-              set -e
+            steps {
 
-              # --- Ensure Node.js and npm are installed (Ubuntu/Debian) ---
-              if ! command -v node >/dev/null 2>&1; then
-                sudo apt-get update -y
-                # Install Node.js ${NODE_MAJOR}.x via nodesource
-                curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | sudo -E bash -
-                sudo apt-get install -y nodejs
-              fi
+                sshagent([SSH_CREDENTIAL]) {
 
-              # Ensure pm2 is installed globally
-              if ! command -v pm2 >/dev/null 2>&1; then
-                sudo npm install -g pm2
-              fi
+                    sh """
 
-              # --- Install app dependencies ---
-              cd ${REMOTE_PATH}
-              # Prefer clean install if package-lock.json exists
-              if [ -f package-lock.json ]; then
-                npm ci
-              else
-                npm install
-              fi
+                        ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${SERVER_IP} 'mkdir -p ${REMOTE_PATH}'
 
-              # --- Start (or restart) the app with PM2 ---
-              APP_FILE='app.js'  # change if your entry file differs
-              if [ ! -f \\"$APP_FILE\\" ]; then
-                echo \\"ERROR: $APP_FILE not found in ${REMOTE_PATH}\\" >&2
-                exit 1
-              fi
+                        scp -o StrictHostKeyChecking=no -r * ${REMOTE_USER}@${SERVER_IP}:${REMOTE_PATH}/
 
-              # Start once or restart if already defined
-              pm2 start $APP_FILE --name node-app || pm2 restart node-app
+                    """
 
-              # Save PM2 process list so it auto-restores on reboot
-              pm2 save
+                }
 
-              # Enable PM2 startup system service (one-time; harmless if re-run)
-              pm2 startup systemd -u ${REMOTE_USER} --hp /home/${REMOTE_USER} >/dev/null 2>&1 || true
-            "
-          '''
+            }
+
         }
-      }
-    }
-  }
+ 
+        stage('Install Dependencies & Start App on the target server') {
 
-  post {
-    success {
-      echo '✅ Application deployed successfully!'
-      echo 'Open: http://<your-public-ip>:3000'
+            steps {
+
+                sshagent([SSH_CREDENTIAL]) {
+
+                    sh """
+
+                        ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${SERVER_IP} '
+
+                            cd ${REMOTE_PATH} &&
+
+                            npm install &&
+
+                            pm2 start app.js --name node-app || pm2 restart node-app
+
+                        '
+
+                    """
+
+                }
+
+            }
+
+        }
+
     }
-    failure {
-      echo '❌ Deployment failed. Check console log for the failing stage.'
+ 
+    post {
+
+        success {
+
+            echo '✅ Application deployed successfully!'
+
+        }
+
+        failure {
+
+            echo '❌ Deployment failed.'
+
+        }
+
     }
-  }
+
 }
+ 
